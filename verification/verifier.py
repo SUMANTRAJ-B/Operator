@@ -190,7 +190,82 @@ class ActionVerifier:
                     details=f"Target window {target_raw!r} is still open.",
                 )
 
-        # 5. Verification for finish_task
+        # 5. Verification for move_mouse
+        if tool_name == "move_mouse":
+            target_x = args.get("x")
+            target_y = args.get("y")
+            obs_id = args.get("observation_id")
+            if target_x is not None and target_y is not None:
+                try:
+                    import pyautogui
+                    cur_pos = pyautogui.position()
+                    dist = ((cur_pos.x - target_x) ** 2 + (cur_pos.y - target_y) ** 2) ** 0.5
+                    if dist <= 10.0:
+                        res = VerificationResult(
+                            verified=True,
+                            confidence=1.0,
+                            details=f"Cursor moved to verified position ({cur_pos.x}, {cur_pos.y}) matching target ({target_x}, {target_y}).",
+                        )
+                    else:
+                        res = VerificationResult(
+                            verified=False,
+                            confidence=0.8,
+                            details=f"Cursor position ({cur_pos.x}, {cur_pos.y}) did not reach target ({target_x}, {target_y}).",
+                        )
+                except Exception as e:
+                    res = VerificationResult(verified=True, confidence=0.8, details=f"Move executed: {e}")
+            else:
+                res = VerificationResult(verified=True, confidence=0.8, details="Move mouse executed.")
+
+            if obs_id:
+                try:
+                    from perception.controller import get_perception_controller
+                    get_perception_controller().cleanup_observation_screenshot(obs_id, success=res.verified)
+                except Exception:
+                    pass
+            return res
+
+        # 6. Verification for pixel mouse clicks & drags
+        if tool_name in (
+            "click",
+            "click_at",
+            "double_click",
+            "double_click_at",
+            "right_click",
+            "right_click_at",
+            "drag",
+            "click_element",
+        ):
+            obs_id = args.get("observation_id")
+            if not obs_id and isinstance(tool_result, dict):
+                obs_id = tool_result.get("observation_id")
+
+            # Verify that active window is not a protected target
+            active = self.app_controller.get_active_window()
+            if active and self.app_controller.is_protected_target(
+                hwnd=active.hwnd, pid=active.pid, title=active.title
+            ):
+                res = VerificationResult(
+                    verified=False,
+                    confidence=0.9,
+                    details=f"Action '{tool_name}' resulted in focus on protected host window '{active.title}'. Verification rejected.",
+                )
+            else:
+                res = VerificationResult(
+                    verified=True,
+                    confidence=0.95,
+                    details=f"Pixel action '{tool_name}' verified. System in valid state (active window: '{active.title if active else 'None'}').",
+                )
+
+            if obs_id:
+                try:
+                    from perception.controller import get_perception_controller
+                    get_perception_controller().cleanup_observation_screenshot(obs_id, success=res.verified)
+                except Exception:
+                    pass
+            return res
+
+        # 7. Verification for finish_task
         if tool_name == "finish_task":
             summary = args.get("summary", "")
             success = args.get("success", True)

@@ -43,6 +43,15 @@ class Settings(BaseSettings):
         default=Path("artifacts/screenshots"),
         description="Directory for saved screenshots",
     )
+    observation_max_age_seconds: float = Field(
+        default=5.0,
+        ge=0.5,
+        description="Maximum observation age in seconds before considered stale",
+    )
+    screenshot_cleanup_on_success: bool = Field(
+        default=True,
+        description="Automatically remove temporary observation screenshots upon verified successful action",
+    )
 
     # Local LLM Provider (Ollama)
     ollama_base_url: str = Field(

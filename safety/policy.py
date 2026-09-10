@@ -320,22 +320,101 @@ class SafetyPolicy:
         """
         args = arguments or {}
 
-        # 1. Mouse coordinate boundary validation
-        if tool_name in ("move_mouse", "click", "double_click", "right_click"):
-            x = args.get("x")
-            y = args.get("y")
-            if x is not None or y is not None:
-                screen_w, screen_h = pyautogui.size()
-                if x is not None and (x < 0 or x >= screen_w):
+        # 1. Coordinate-changing Mouse Interaction Safety & Visual Grounding
+        COORDINATE_TOOLS = (
+            "move_mouse",
+            "click",
+            "double_click",
+            "right_click",
+            "click_at",
+            "double_click_at",
+            "right_click_at",
+            "drag",
+        )
+        if tool_name in COORDINATE_TOOLS:
+            coords_to_check = []
+            if tool_name == "drag":
+                start_x = args.get("start_x")
+                start_y = args.get("start_y")
+                end_x = args.get("end_x")
+                end_y = args.get("end_y")
+                if start_x is not None and start_y is not None:
+                    coords_to_check.append(("start", int(start_x), int(start_y)))
+                if end_x is not None and end_y is not None:
+                    coords_to_check.append(("end", int(end_x), int(end_y)))
+                if not coords_to_check:
                     return SafetyDecision(
                         allowed=False,
-                        reason=f"Coordinate X={x} out of screen bounds [0, {screen_w - 1}].",
+                        reason="Action 'drag' requires start_x, start_y, end_x, and end_y coordinates.",
                     )
-                if y is not None and (y < 0 or y >= screen_h):
+            else:
+                x = args.get("x")
+                y = args.get("y")
+                if x is not None and y is not None:
+                    coords_to_check.append(("target", int(x), int(y)))
+                elif x is not None or y is not None:
                     return SafetyDecision(
                         allowed=False,
-                        reason=f"Coordinate Y={y} out of screen bounds [0, {screen_h - 1}].",
+                        reason=f"Action '{tool_name}' must specify both X and Y coordinates.",
                     )
+                elif tool_name in ("move_mouse", "click_at", "double_click_at", "right_click_at"):
+                    return SafetyDecision(
+                        allowed=False,
+                        reason=f"Action '{tool_name}' requires explicit X and Y coordinates.",
+                    )
+
+            # Screen boundary check first
+            screen_w, screen_h = pyautogui.size()
+            for label, pt_x, pt_y in coords_to_check:
+                if pt_x < 0 or pt_x >= screen_w:
+                    return SafetyDecision(
+                        allowed=False,
+                        reason=f"Coordinate X={pt_x} ({label}) out of screen bounds [0, {screen_w - 1}].",
+                    )
+                if pt_y < 0 or pt_y >= screen_h:
+                    return SafetyDecision(
+                        allowed=False,
+                        reason=f"Coordinate Y={pt_y} ({label}) out of screen bounds [0, {screen_h - 1}].",
+                    )
+
+            # Grounding check: ALL raw coordinate actions must have observation_id
+            if coords_to_check:
+                obs_id = args.get("observation_id")
+                if not obs_id:
+                    return SafetyDecision(
+                        allowed=False,
+                        reason=f"Safety guard: Coordinate action '{tool_name}' requires an active observation_id for visual grounding. Ungrounded coordinates rejected.",
+                    )
+
+                from perception.grounding import get_grounding_registry
+                from perception.geometry import WindowGeometryProvider
+                grounding_reg = get_grounding_registry()
+                geom = WindowGeometryProvider()
+
+                for label, pt_x, pt_y in coords_to_check:
+                    is_grounded, ground_reason, _ = grounding_reg.validate_coordinate_grounding(
+                        observation_id=str(obs_id),
+                        x=pt_x,
+                        y=pt_y,
+                    )
+                    if not is_grounded:
+                        return SafetyDecision(
+                            allowed=False,
+                            reason=f"Safety guard: Grounding validation failed for '{tool_name}' ({label}): {ground_reason}",
+                        )
+
+                    # Protected region and host window check
+                    is_prot_region, prot_reason = geom.is_point_in_protected_region(
+                        x=pt_x,
+                        y=pt_y,
+                        app_controller=self.app_controller,
+                    )
+                    if is_prot_region:
+                        return SafetyDecision(
+                            allowed=False,
+                            reason=f"Safety guard: Coordinate ({pt_x}, {pt_y}) ({label}) lies within protected host/terminal/IDE region ({prot_reason}). Action BLOCKED.",
+                        )
+
 
         # 2. Application and Window Protection Check (Centralized Safety Gate)
         if tool_name == "close_window":

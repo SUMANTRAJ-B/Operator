@@ -35,6 +35,20 @@ class UIAutomationProvider:
 
         elements: List[DetectedUIElement] = []
 
+        # Control Type Map for common UIAutomation controls
+        type_id_map = {
+            50000: "button",
+            50002: "checkbox",
+            50003: "combobox",
+            50004: "edit",
+            50005: "hyperlink",
+            50007: "listitem",
+            50011: "menuitem",
+            50013: "radiobutton",
+            50019: "tabitem",
+            50020: "text",
+        }
+
         # 1. UIAutomation via comtypes
         if self._uia_available:
             try:
@@ -46,33 +60,55 @@ class UIAutomationProvider:
                     uia = comtypes.client.CreateObject(mod.CUIAutomation, interface=mod.IUIAutomation)
                     root = uia.ElementFromHandle(hwnd)
                     if root:
-                        # Find buttons (UIA_ButtonControlTypeId = 50000)
-                        cond_btn = uia.CreatePropertyCondition(30003, 50000)
-                        found_buttons = root.FindAll(mod.TreeScope_Descendants, cond_btn)
-                        if found_buttons:
-                            count = found_buttons.Length
+                        # Build OR condition across interactive control types or query true condition
+                        true_cond = uia.CreateTrueCondition()
+                        found_elements = root.FindAll(mod.TreeScope_Descendants, true_cond)
+                        if found_elements:
+                            count = min(found_elements.Length, 150)
                             for i in range(count):
-                                elem = found_buttons.GetElement(i)
-                                name = getattr(elem, "CurrentName", "") or ""
-                                rect = getattr(elem, "CurrentBoundingRectangle", None)
-                                if rect:
-                                    # rect is (left, top, width, height) or tuple of 4 coords
-                                    # In comtypes UIAutomation, CurrentBoundingRectangle is a tagRECT (left, top, right, bottom)
-                                    left = getattr(rect, "left", None)
-                                    top = getattr(rect, "top", None)
-                                    right = getattr(rect, "right", None)
-                                    bottom = getattr(rect, "bottom", None)
-                                    if left is not None and right is not None and (right > left) and (bottom > top):
-                                        bbox = BoundingBox(left=left, top=top, right=right, bottom=bottom)
-                                        elements.append(
-                                            DetectedUIElement(
-                                                label=name.strip(),
-                                                element_type="button",
-                                                bounds=bbox,
-                                                confidence=1.0,
-                                                attributes={"source": "uiautomation"},
-                                            )
-                                        )
+                                try:
+                                    elem = found_elements.GetElement(i)
+                                    try:
+                                        c_type_id = getattr(elem, "CurrentControlType", 0)
+                                    except Exception:
+                                        c_type_id = 0
+                                    elem_type = type_id_map.get(c_type_id, "control")
+
+                                    # Filter for interactive or named controls
+                                    name = getattr(elem, "CurrentName", "") or ""
+                                    auto_id = getattr(elem, "CurrentAutomationId", "") or ""
+                                    is_enabled = getattr(elem, "CurrentIsEnabled", True)
+                                    is_offscreen = getattr(elem, "CurrentIsOffscreen", False)
+
+                                    if is_offscreen:
+                                        continue
+
+                                    rect = getattr(elem, "CurrentBoundingRectangle", None)
+                                    if rect:
+                                        left = getattr(rect, "left", None)
+                                        top = getattr(rect, "top", None)
+                                        right = getattr(rect, "right", None)
+                                        bottom = getattr(rect, "bottom", None)
+                                        if left is not None and right is not None and (right > left) and (bottom > top):
+                                            label = name.strip() or auto_id.strip()
+                                            if label:
+                                                bbox = BoundingBox(left=left, top=top, right=right, bottom=bottom)
+                                                elements.append(
+                                                    DetectedUIElement(
+                                                        label=label,
+                                                        element_type=elem_type,
+                                                        bounds=bbox,
+                                                        confidence=1.0,
+                                                        attributes={
+                                                            "source": "uiautomation",
+                                                            "automation_id": auto_id,
+                                                            "control_type_id": c_type_id,
+                                                            "is_enabled": bool(is_enabled),
+                                                        },
+                                                    )
+                                                )
+                                except Exception:
+                                    continue
                 finally:
                     CoUninitialize()
             except Exception as e:
@@ -104,6 +140,38 @@ class UIAutomationProvider:
                 logger.debug(f"Win32 EnumChildWindows fallback error: {e}")
 
         return elements
+
+    def find_control_by_query(
+        self,
+        query: str,
+        hwnd: Optional[int] = None,
+    ) -> Optional[DetectedUIElement]:
+        """Find the single best matching interactive control for a query string."""
+        target_hwnd = hwnd or win32gui.GetForegroundWindow()
+        if not target_hwnd or not win32gui.IsWindow(target_hwnd):
+            return None
+
+        controls = self.find_controls_in_window(target_hwnd)
+        query_l = query.strip().lower()
+
+        # 1. Exact match
+        for c in controls:
+            if c.label.strip().lower() == query_l:
+                return c
+            auto_id = c.attributes.get("automation_id", "").strip().lower()
+            if auto_id and auto_id == query_l:
+                return c
+
+        # 2. Substring match
+        for c in controls:
+            lbl_l = c.label.strip().lower()
+            if query_l in lbl_l or lbl_l in query_l:
+                return c
+            auto_id = c.attributes.get("automation_id", "").strip().lower()
+            if auto_id and (query_l in auto_id or auto_id in query_l):
+                return c
+
+        return None
 
     def detect_modal_dialog(self, parent_hwnd: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Detect if an active modal dialog (e.g. confirmation, save, replace) is present."""

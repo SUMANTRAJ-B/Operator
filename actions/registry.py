@@ -183,11 +183,50 @@ def create_default_registry() -> ToolRegistry:
         )
     )
 
-    # 3. move_mouse
+    # 3. fresh_screen_observation
+    def _observe_tool(capture_image: bool = False) -> Dict[str, Any]:
+        from perception.controller import get_perception_controller
+        pc = get_perception_controller()
+        obs = pc.fresh_screen_observation(capture_image=capture_image)
+        elements_summary = [
+            {"label": e.label, "type": e.element_type, "bounds": e.bounds.to_tuple(), "center": e.bounds.center}
+            for e in obs.detected_elements[:25]
+        ]
+        return {
+            "observation_id": obs.observation_id,
+            "timestamp": obs.timestamp,
+            "screen_size": obs.screen_size,
+            "active_window": obs.active_window,
+            "detected_elements_count": len(obs.detected_elements),
+            "detected_elements": elements_summary,
+            "modal_dialog": obs.modal_dialog,
+            "vision_available": obs.vision_available,
+        }
+
+    registry.register(
+        Tool(
+            name="fresh_screen_observation",
+            description="Capture a fresh screen observation with unique observation_id, discovering visible controls and bounding boxes.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "capture_image": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Whether to capture an ephemeral screenshot image.",
+                    }
+                },
+                "required": [],
+            },
+            handler=_observe_tool,
+        )
+    )
+
+    # 4. move_mouse
     registry.register(
         Tool(
             name="move_mouse",
-            description="Move the mouse cursor to the specified screen coordinates.",
+            description="Move the mouse cursor to the specified screen coordinates grounded in an active observation.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -198,18 +237,24 @@ def create_default_registry() -> ToolRegistry:
                         "description": "Movement animation duration in seconds.",
                         "default": 0.0,
                     },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
                 },
-                "required": ["x", "y"],
+                "required": ["x", "y", "observation_id"],
             },
-            handler=lambda x, y, duration=0.0: mouse.move_to(x=x, y=y, duration=duration),
+            handler=lambda x, y, duration=0.0, observation_id=None: mouse.move_to(
+                x=x, y=y, duration=duration, observation_id=observation_id
+            ),
         )
     )
 
-    # 4. click
+    # 5. click
     registry.register(
         Tool(
             name="click",
-            description="Click at screen coordinates or at the current mouse position.",
+            description="Click at screen coordinates grounded in an observation or at current position.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -226,16 +271,54 @@ def create_default_registry() -> ToolRegistry:
                         "default": 1,
                         "description": "Number of clicks.",
                     },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
                 },
                 "required": [],
             },
-            handler=lambda x=None, y=None, button="left", clicks=1: mouse.click(
-                x=x, y=y, button=button, clicks=clicks
+            handler=lambda x=None, y=None, button="left", clicks=1, observation_id=None: mouse.click(
+                x=x, y=y, button=button, clicks=clicks, observation_id=observation_id
             ),
         )
     )
 
-    # 5. double_click
+    # 6. click_at
+    registry.register(
+        Tool(
+            name="click_at",
+            description="Click at explicit screen coordinates grounded in an active observation.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "Target X coordinate in pixels."},
+                    "y": {"type": "integer", "description": "Target Y coordinate in pixels."},
+                    "button": {
+                        "type": "string",
+                        "enum": ["left", "middle", "right"],
+                        "default": "left",
+                        "description": "Mouse button to click.",
+                    },
+                    "clicks": {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Number of clicks.",
+                    },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
+                },
+                "required": ["x", "y", "observation_id"],
+            },
+            handler=lambda x, y, button="left", clicks=1, observation_id=None: mouse.click_at(
+                x=x, y=y, button=button, clicks=clicks, observation_id=observation_id
+            ),
+        )
+    )
+
+    # 7. double_click
     registry.register(
         Tool(
             name="double_click",
@@ -245,14 +328,43 @@ def create_default_registry() -> ToolRegistry:
                 "properties": {
                     "x": {"type": "integer", "description": "Optional X coordinate."},
                     "y": {"type": "integer", "description": "Optional Y coordinate."},
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
                 },
                 "required": [],
             },
-            handler=lambda x=None, y=None: mouse.double_click(x=x, y=y),
+            handler=lambda x=None, y=None, observation_id=None: mouse.double_click(
+                x=x, y=y, observation_id=observation_id
+            ),
         )
     )
 
-    # 6. right_click
+    # 8. double_click_at
+    registry.register(
+        Tool(
+            name="double_click_at",
+            description="Double-click at explicit screen coordinates grounded in an active observation.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "Target X coordinate."},
+                    "y": {"type": "integer", "description": "Target Y coordinate."},
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
+                },
+                "required": ["x", "y", "observation_id"],
+            },
+            handler=lambda x, y, observation_id=None: mouse.double_click_at(
+                x=x, y=y, observation_id=observation_id
+            ),
+        )
+    )
+
+    # 9. right_click
     registry.register(
         Tool(
             name="right_click",
@@ -262,10 +374,156 @@ def create_default_registry() -> ToolRegistry:
                 "properties": {
                     "x": {"type": "integer", "description": "Optional X coordinate."},
                     "y": {"type": "integer", "description": "Optional Y coordinate."},
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
                 },
                 "required": [],
             },
-            handler=lambda x=None, y=None: mouse.right_click(x=x, y=y),
+            handler=lambda x=None, y=None, observation_id=None: mouse.right_click(
+                x=x, y=y, observation_id=observation_id
+            ),
+        )
+    )
+
+    # 10. right_click_at
+    registry.register(
+        Tool(
+            name="right_click_at",
+            description="Right-click at explicit screen coordinates grounded in an active observation.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "Target X coordinate."},
+                    "y": {"type": "integer", "description": "Target Y coordinate."},
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
+                },
+                "required": ["x", "y", "observation_id"],
+            },
+            handler=lambda x, y, observation_id=None: mouse.right_click_at(
+                x=x, y=y, observation_id=observation_id
+            ),
+        )
+    )
+
+    # 11. drag
+    registry.register(
+        Tool(
+            name="drag",
+            description="Drag mouse from start coordinates to end coordinates grounded in an active observation.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "start_x": {"type": "integer", "description": "Start X coordinate in pixels."},
+                    "start_y": {"type": "integer", "description": "Start Y coordinate in pixels."},
+                    "end_x": {"type": "integer", "description": "End X coordinate in pixels."},
+                    "end_y": {"type": "integer", "description": "End Y coordinate in pixels."},
+                    "duration": {
+                        "type": "number",
+                        "default": 0.3,
+                        "description": "Drag movement duration in seconds.",
+                    },
+                    "observation_id": {
+                        "type": "string",
+                        "description": "Active observation_id grounding this coordinate action.",
+                    },
+                },
+                "required": ["start_x", "start_y", "end_x", "end_y", "observation_id"],
+            },
+            handler=lambda start_x, start_y, end_x, end_y, duration=0.3, observation_id=None: mouse.drag(
+                start_x=start_x,
+                start_y=start_y,
+                end_x=end_x,
+                end_y=end_y,
+                duration=duration,
+                observation_id=observation_id,
+            ),
+        )
+    )
+
+    # 12. click_element (Semantic UIAutomation-grounded click)
+    def _click_element_tool(
+        target: str,
+        window_title_or_hwnd: Optional[Union[str, int]] = None,
+        button: str = "left",
+    ) -> Dict[str, Any]:
+        from perception.controller import get_perception_controller
+        pc = get_perception_controller()
+        target_hwnd = None
+        if window_title_or_hwnd:
+            apps.ensure_target_focused(window_title_or_hwnd)
+            win = apps.resolve_window_target(window_title_or_hwnd)
+            if win:
+                target_hwnd = win.hwnd
+
+        # 1. Capture fresh observation
+        obs = pc.fresh_screen_observation(capture_image=False)
+
+        # 2. Find target control via UIAutomation
+        elem = pc.uia.find_control_by_query(target, hwnd=target_hwnd)
+        if not elem:
+            elem, source = pc.find_element(target, window_hwnd=target_hwnd, observation=obs)
+
+        if not elem:
+            raise RuntimeError(
+                f"Visual grounding failed: UIAutomation could not locate interactive control matching '{target}'."
+            )
+
+        center_x, center_y = elem.bounds.center
+
+        # 3. Final pre-click validation: ensure inside screen bounds
+        mouse.validate_coordinates(center_x, center_y)
+
+        # 4. Dispatch grounded click
+        mouse.click_at(
+            x=center_x,
+            y=center_y,
+            button=button,
+            observation_id=obs.observation_id,
+        )
+
+        # 5. Capture post-action observation
+        post_obs = pc.fresh_screen_observation(capture_image=False)
+
+        return {
+            "success": True,
+            "target": target,
+            "label": elem.label,
+            "element_type": elem.element_type,
+            "bounding_box": elem.bounds.to_tuple(),
+            "click_point": (center_x, center_y),
+            "observation_id": obs.observation_id,
+            "post_observation_id": post_obs.observation_id,
+        }
+
+    registry.register(
+        Tool(
+            name="click_element",
+            description="Semantic interaction: resolve an interactive UI element by name/label via UIAutomation, obtain its verified bounding box, and click its safe center coordinate.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Name or text label of the target UI control (e.g. 'Yes', 'OK', 'Cancel', 'Save').",
+                    },
+                    "window_title_or_hwnd": {
+                        "description": "Optional target window title or handle.",
+                    },
+                    "button": {
+                        "type": "string",
+                        "enum": ["left", "right"],
+                        "default": "left",
+                        "description": "Mouse button to click.",
+                    },
+                },
+                "required": ["target"],
+            },
+            handler=_click_element_tool,
         )
     )
 

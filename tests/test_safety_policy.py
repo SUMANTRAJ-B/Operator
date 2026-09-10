@@ -10,14 +10,31 @@ def test_safety_policy_singleton():
     assert s1 is s2
 
 
+@patch("perception.geometry.WindowGeometryProvider.is_point_in_protected_region", return_value=(False, ""))
 @patch("pyautogui.size")
-def test_safety_policy_blocks_out_of_bounds_mouse(mock_size):
+def test_safety_policy_blocks_out_of_bounds_mouse(mock_size, mock_prot):
     mock_size.return_value = (1920, 1080)
+    import time
+    from perception.grounding import get_grounding_registry
+    registry = get_grounding_registry()
+    registry.register_observation(
+        observation_id="obs_test_500",
+        timestamp=time.time(),
+        screen_size=(1920, 1080),
+    )
+
     policy = SafetyPolicy()
 
-    # Valid coordinates
-    valid_dec = policy.evaluate_action("move_mouse", {"x": 500, "y": 500})
+    # Valid grounded coordinates
+    valid_dec = policy.evaluate_action(
+        "move_mouse", {"x": 500, "y": 500, "observation_id": "obs_test_500"}
+    )
     assert valid_dec.allowed is True
+
+    # Ungrounded coordinates (missing observation_id)
+    ungrounded_dec = policy.evaluate_action("move_mouse", {"x": 500, "y": 500})
+    assert ungrounded_dec.allowed is False
+    assert "requires an active observation_id" in ungrounded_dec.reason
 
     # Out of bounds X
     invalid_x = policy.evaluate_action("move_mouse", {"x": 2500, "y": 500})
