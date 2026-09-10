@@ -1,0 +1,9 @@
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+rich>=13.7.0
+pyautogui>=0.9.54
+mss>=9.0.1
+Pillow>=10.3.0
+pywin32>=306
+pytest>=8.1.0
+requests>=2.31.0
