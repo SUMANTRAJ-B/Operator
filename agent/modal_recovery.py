@@ -529,7 +529,25 @@ class ModalRecoveryController:
         if target_hwnd and win32gui.IsWindow(target_hwnd):
             if top_hwnd != target_hwnd:
                 owner = win32gui.GetWindow(top_hwnd, win32con.GW_OWNER)
-                if owner == target_hwnd or (not win32gui.IsWindowEnabled(target_hwnd)):
+                import win32process
+                _, top_pid = win32process.GetWindowThreadProcessId(top_hwnd)
+                _, target_pid = win32process.GetWindowThreadProcessId(target_hwnd)
+
+                is_owned_by_target = (owner == target_hwnd) or (top_pid == target_pid and not win32gui.IsWindowEnabled(target_hwnd))
+
+                if not is_owned_by_target and not win32gui.IsWindowEnabled(target_hwnd):
+                    import ctypes
+                    last_popup = ctypes.windll.user32.GetLastActivePopup(target_hwnd)
+                    if last_popup and last_popup != target_hwnd and win32gui.IsWindow(last_popup):
+                        top_hwnd = last_popup
+                        owner = win32gui.GetWindow(top_hwnd, win32con.GW_OWNER)
+                        is_owned_by_target = True
+                        try:
+                            win32gui.SetForegroundWindow(top_hwnd)
+                        except Exception:
+                            pass
+
+                if is_owned_by_target:
                     cls = win32gui.GetClassName(top_hwnd)
                     title = win32gui.GetWindowText(top_hwnd)
                     controls = self.perception.uia.find_controls_in_window(top_hwnd)

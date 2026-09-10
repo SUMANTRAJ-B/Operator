@@ -179,15 +179,6 @@ class UIAutomationProvider:
         if not top_hwnd or not win32gui.IsWindow(top_hwnd):
             return None
 
-        # Check window style for modal / popup characteristics
-        import win32con
-        style = win32gui.GetWindowLong(top_hwnd, win32con.GWL_STYLE)
-        ex_style = win32gui.GetWindowLong(top_hwnd, win32con.GWL_EXSTYLE)
-        is_dialog = bool(style & win32con.WS_POPUP) or bool(ex_style & win32con.WS_EX_DLGMODALFRAME)
-
-        title = win32gui.GetWindowText(top_hwnd)
-        cls_name = win32gui.GetClassName(top_hwnd)
-
         # Owner window check
         owner_hwnd = None
         owner_title = ""
@@ -198,8 +189,19 @@ class UIAutomationProvider:
         except Exception:
             owner_hwnd = None
 
+        title = win32gui.GetWindowText(top_hwnd)
+        cls_name = win32gui.GetClassName(top_hwnd)
+
+        # Check window style for modal / popup characteristics
+        import win32con
+        style = win32gui.GetWindowLong(top_hwnd, win32con.GW_STYLE)
+        ex_style = win32gui.GetWindowLong(top_hwnd, win32con.GW_EXSTYLE)
+        has_owner = bool(owner_hwnd and win32gui.IsWindow(owner_hwnd))
+        has_modal_frame = bool(ex_style & win32con.WS_EX_DLGMODALFRAME)
+        is_dialog = cls_name == "#32770" or has_modal_frame or (has_owner and bool(style & win32con.WS_POPUP))
+
         # Common dialog class names: #32770 (standard Windows dialog)
-        if cls_name == "#32770" or is_dialog or "confirm" in title.lower() or "dialog" in cls_name.lower():
+        if cls_name == "#32770" or is_dialog or (has_owner and ("confirm" in title.lower() or "dialog" in cls_name.lower())):
             controls = self.find_controls_in_window(top_hwnd)
             control_dicts = []
             message_texts = []
