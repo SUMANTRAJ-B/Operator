@@ -127,6 +127,7 @@ class AgentState:
     # Verified state transitions
     verified_facts: List[VerifiedFact] = field(default_factory=list)
     entity_states: Dict[str, str] = field(default_factory=dict)
+    modal_recovery_audits: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def is_terminal(self) -> bool:
@@ -254,6 +255,13 @@ class AgentState:
             if "notepad" in norm_target:
                 self.entity_states["notepad"] = state_type
         return fact
+
+    def record_modal_recovery(self, audit: Any) -> None:
+        """Record a structured modal recovery audit event."""
+        if hasattr(audit, "to_dict"):
+            self.modal_recovery_audits.append(audit.to_dict())
+        elif isinstance(audit, dict):
+            self.modal_recovery_audits.append(audit)
 
     def is_objective_satisfied(self) -> Tuple[bool, str]:
         """Generic evaluation of whether the user goal has been achieved based on verified state."""

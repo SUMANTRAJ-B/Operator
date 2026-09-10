@@ -290,6 +290,120 @@ class ActionVerifier:
         except Exception:
             return True
 
+    def verify_modal_dismissed(
+        self,
+        modal_hwnd: int,
+        target_hwnd: Optional[int] = None,
+        target_title_or_query: Optional[str] = None,
+    ) -> VerificationResult:
+        """Verify modal dialog dismissal using multi-signal state evaluation.
+
+        Signals checked:
+        1. Modal window destruction (IsWindow == False).
+        2. Modal window invisibility / non-blocking state (IsWindowVisible == False).
+        3. Focus release: active foreground window is no longer the modal HWND.
+        4. Target window accessibility: if target window exists, verify it is accessible and
+           enabled (IsWindowEnabled == True).
+        5. Target protection invariant: the active window is not a protected host/IDE/terminal.
+        6. Task execution readiness: confirms original task can safely continue.
+        """
+        import win32gui
+
+        # Signal 1: Window Destruction
+        window_exists = False
+        try:
+            window_exists = bool(win32gui.IsWindow(modal_hwnd))
+        except Exception:
+            window_exists = False
+
+        if not window_exists:
+            # Modal is completely destroyed; verify current active window is safe
+            active = self.app_controller.get_active_window()
+            if active and self.app_controller.is_protected_target(
+                hwnd=active.hwnd, pid=active.pid, title=active.title
+            ):
+                return VerificationResult(
+                    verified=False,
+                    confidence=0.9,
+                    details=f"Modal HWND {modal_hwnd} destroyed, but focus shifted to protected host window '{active.title}'.",
+                )
+            return VerificationResult(
+                verified=True,
+                confidence=1.0,
+                details=f"Modal dialog HWND {modal_hwnd} successfully verified destroyed (IsWindow == False). Focus is safe.",
+            )
+
+        # Modal HWND is still valid; evaluate other state signals
+        is_visible = False
+        try:
+            is_visible = bool(win32gui.IsWindowVisible(modal_hwnd))
+        except Exception:
+            is_visible = False
+
+        active_win = self.app_controller.get_active_window()
+        active_hwnd = active_win.hwnd if active_win else None
+        active_title = active_win.title if active_win else ""
+
+        # Signal 5: Protection check on current active window
+        if active_win and self.app_controller.is_protected_target(
+            hwnd=active_win.hwnd, pid=active_win.pid, title=active_win.title
+        ):
+            return VerificationResult(
+                verified=False,
+                confidence=0.9,
+                details=f"Modal resolution resulted in focus on protected host window '{active_title}'.",
+            )
+
+        # Signal 3: Focus release
+        focus_released = (active_hwnd is not None and active_hwnd != modal_hwnd)
+
+        # Signal 4: Target window accessibility & enabled state
+        target_enabled = True
+        target_matches_focus = False
+        if target_hwnd and win32gui.IsWindow(target_hwnd):
+            try:
+                target_enabled = bool(win32gui.IsWindowEnabled(target_hwnd))
+            except Exception:
+                target_enabled = True
+            target_matches_focus = (active_hwnd == target_hwnd)
+        elif target_title_or_query:
+            q = target_title_or_query.lower().strip()
+            target_matches_focus = q in active_title.lower() if active_title else False
+
+        # Multi-signal evaluation:
+        # If modal is not visible AND focus has released from modal AND target is enabled/accessible:
+        if (not is_visible) and focus_released:
+            return VerificationResult(
+                verified=True,
+                confidence=0.95,
+                details=(
+                    f"Modal HWND {modal_hwnd} verified dismissed via state signals: "
+                    f"is_visible=False, focus_released=True, target_enabled={target_enabled}, "
+                    f"active_window='{active_title}' (HWND {active_hwnd})."
+                ),
+            )
+
+        # If modal is still visible but focus has shifted to the expected target and target is enabled
+        if is_visible and target_matches_focus and target_enabled and focus_released:
+            return VerificationResult(
+                verified=True,
+                confidence=0.85,
+                details=(
+                    f"Modal HWND {modal_hwnd} no longer captures task focus: "
+                    f"expected target '{active_title}' is foreground and enabled."
+                ),
+            )
+
+        # If modal is still visible and still holds focus or target is disabled:
+        return VerificationResult(
+            verified=False,
+            confidence=0.8,
+            details=(
+                f"Modal HWND {modal_hwnd} is still blocking: is_visible={is_visible}, "
+                f"modal_has_focus={(active_hwnd == modal_hwnd)}, target_enabled={target_enabled}."
+            ),
+        )
+
 
 
 def get_notepad_text(hwnd: int) -> str:

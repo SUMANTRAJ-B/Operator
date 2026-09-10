@@ -7,6 +7,11 @@ from actions.applications import get_app_controller
 from actions.mouse import get_mouse_controller
 from actions.registry import ToolRegistry, get_tool_registry
 from agent.memory import AgentMemory
+from agent.modal_recovery import (
+    ModalRecoveryController,
+    RecoveryOutcome,
+    get_modal_recovery_controller,
+)
 from agent.planner import StepStatus, TaskPlan, TaskPlanner
 from agent.recovery import ErrorCategory, RecoveryManager
 from agent.state import AgentState, AgentStatus, StepExecution, OwnedResource
@@ -32,6 +37,7 @@ class OperatorAgent:
         verifier: Optional[ActionVerifier] = None,
         planner: Optional[TaskPlanner] = None,
         recovery: Optional[RecoveryManager] = None,
+        modal_recovery: Optional[ModalRecoveryController] = None,
         ui: Optional[DeveloperUI] = None,
         cleanup_on_finish: Optional[bool] = None,
         timeout_seconds: Optional[float] = None,
@@ -43,6 +49,7 @@ class OperatorAgent:
         self.verifier = verifier or get_action_verifier()
         self.planner = planner or TaskPlanner()
         self.recovery = recovery or RecoveryManager()
+        self.modal_recovery = modal_recovery or get_modal_recovery_controller()
         self.ui = ui or get_developer_ui()
         self.apps = get_app_controller()
         self.mouse = get_mouse_controller()
@@ -327,6 +334,31 @@ class OperatorAgent:
 
                     if target:
                         focused = self.apps.ensure_target_focused(target)
+                        if not focused:
+                            # Check if a blocking modal or dialog is intercepting target focus
+                            is_block, d_state = self.modal_recovery.is_blocking_modal(target_title_or_query=target)
+                            if is_block and d_state:
+                                self.ui.display_phase("RECOVER", f"Blocking dialog detected: '{d_state.title}'. Initiating visual recovery...")
+                                state.status = AgentStatus.RECOVERING
+                                rec_result = self.modal_recovery.attempt_recovery(
+                                    task_id=state.task_id,
+                                    goal=goal,
+                                    target_title_or_query=target,
+                                )
+                                state.record_modal_recovery(rec_result.audit)
+                                if rec_result.success:
+                                    self.ui.display_phase("RECOVER", f"Modal recovery verified: {rec_result.message}. Re-establishing target focus.")
+                                    time.sleep(0.3)
+                                    focused = self.apps.ensure_target_focused(target)
+                                elif rec_result.outcome in (
+                                    RecoveryOutcome.HIGH_RISK,
+                                    RecoveryOutcome.SAFE_STOP,
+                                    RecoveryOutcome.NO_SAFE_ACTION,
+                                ):
+                                    state.mark_failed(f"Modal recovery safe stop: {rec_result.message}")
+                                    self.ui.display_failure(state.error, state.elapsed_seconds)
+                                    return state
+
                         if not focused:
                             active_now = self.apps.get_active_window()
                             err_msg = (

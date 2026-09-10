@@ -234,6 +234,7 @@ class PerceptionController:
                             bounding_box=bbox,
                             click_point=bbox.center,
                             control_type=c_dict.get("type", "button"),
+                            control_metadata=c_dict,
                             screen_size=(w, h),
                             max_age_seconds=configured_max_age,
                             target_hwnd=modal.get("hwnd"),

@@ -18,6 +18,8 @@ class ErrorCategory(str, Enum):
     VERIFICATION_FAILED = "verification_failed"
     WINDOW_NOT_FOUND = "window_not_found"
     TIMEOUT = "timeout"
+    MODAL_BLOCKED = "modal_blocked"
+    MODAL_RECOVERY_FAILED = "modal_recovery_failed"
     UNKNOWN = "unknown"
 
 
@@ -64,6 +66,16 @@ class RecoveryManager:
             feedback = (
                 f"Action '{tool_name}' executed, but post-action verification failed: {error_str}. "
                 "Observe the current desktop state (e.g. check open windows or active window) and retry with the correct handle or focus."
+            )
+        elif category == ErrorCategory.MODAL_BLOCKED:
+            feedback = (
+                f"Action '{tool_name}' encountered a blocking dialog or modal: {error_str}. "
+                "Visual recovery was engaged to resolve the modal state."
+            )
+        elif category == ErrorCategory.MODAL_RECOVERY_FAILED:
+            feedback = (
+                f"Modal recovery for '{tool_name}' could not safely resolve dialog: {error_str}. "
+                "Action was halted safely to prevent unverified UI modifications."
             )
         else:
             feedback = (

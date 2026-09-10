@@ -188,23 +188,64 @@ class UIAutomationProvider:
         title = win32gui.GetWindowText(top_hwnd)
         cls_name = win32gui.GetClassName(top_hwnd)
 
+        # Owner window check
+        owner_hwnd = None
+        owner_title = ""
+        try:
+            owner_hwnd = win32gui.GetWindow(top_hwnd, win32con.GW_OWNER)
+            if owner_hwnd and win32gui.IsWindow(owner_hwnd):
+                owner_title = win32gui.GetWindowText(owner_hwnd)
+        except Exception:
+            owner_hwnd = None
+
         # Common dialog class names: #32770 (standard Windows dialog)
         if cls_name == "#32770" or is_dialog or "confirm" in title.lower() or "dialog" in cls_name.lower():
             controls = self.find_controls_in_window(top_hwnd)
-            control_dicts = [
-                {
-                    "label": c.label,
-                    "type": c.element_type,
-                    "bounds": c.bounds.to_tuple(),
-                    "confidence": c.confidence,
-                }
-                for c in controls
-            ]
+            control_dicts = []
+            message_texts = []
+            for c in controls:
+                ctrl_id = c.attributes.get("control_id", 0)
+                is_def = c.attributes.get("is_default", False)
+                c_hwnd = c.attributes.get("hwnd")
+                if not ctrl_id and c_hwnd:
+                    try:
+                        ctrl_id = win32gui.GetDlgCtrlID(c_hwnd)
+                    except Exception:
+                        pass
+                if not is_def and c_hwnd and c.element_type == "button":
+                    try:
+                        st = win32gui.GetWindowLong(c_hwnd, win32con.GWL_STYLE)
+                        is_def = bool(st & win32con.BS_DEFPUSHBUTTON)
+                    except Exception:
+                        pass
+
+                control_dicts.append(
+                    {
+                        "label": c.label,
+                        "type": c.element_type,
+                        "bounds": c.bounds.to_tuple(),
+                        "confidence": c.confidence,
+                        "control_id": ctrl_id,
+                        "is_default": is_def,
+                        "automation_id": c.attributes.get("automation_id", ""),
+                        "hwnd": c_hwnd,
+                        "is_enabled": c.attributes.get("is_enabled", True),
+                    }
+                )
+                if c.element_type in ("text", "control") and c.label and c.label != cls_name:
+                    message_texts.append(c.label)
+
+            full_msg = " | ".join(message_texts) if message_texts else ""
+
             return {
                 "type": "modal_dialog",
                 "hwnd": top_hwnd,
                 "title": title,
                 "class_name": cls_name,
+                "owner_hwnd": owner_hwnd,
+                "owner_title": owner_title,
+                "is_modal": is_dialog,
+                "message_text": full_msg,
                 "controls": control_dicts,
             }
 
